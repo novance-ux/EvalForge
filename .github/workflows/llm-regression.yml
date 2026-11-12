@@ -1,0 +1,46 @@
+# Runs the unit tests and the LLM regression suite on every pull request.
+# The job fails (exit code 2) if the suite regresses against the baseline.
+#
+# The default suite uses the offline mock provider, so no secrets are needed.
+# To test a real model, add OPENAI_API_KEY as a repository secret and pass
+# `--model openai/gpt-4o-mini` below.
+
+name: llm-regression
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Unit tests
+        run: pytest -q
+
+      - name: Validate suites
+        run: |
+          for s in suites/*.yaml; do llm-harness validate "$s"; done
+
+      # Baseline = prompt on the target branch; candidate = prompt in this PR.
+      - name: Baseline from main
+        run: |
+          git fetch origin ${{ github.base_ref || 'main' }} --depth=1
+          git show FETCH_HEAD:prompts/classifier_v1.txt > /tmp/baseline_prompt.txt
+          llm-harness run suites/support_classifier.yaml --prompt /tmp/baseline_prompt.txt --set-baseline --no-report
+      - name: Candidate (this PR)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: llm-harness run suites/support_classifier.yaml --fail-on-regression
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-report
+          path: reports/*.html

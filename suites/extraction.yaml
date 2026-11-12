@@ -1,0 +1,48 @@
+# Structured extraction from invoice e-mails: demonstrates regex, numeric
+# tolerance, JSON-schema and JSON-path assertions.
+
+name: invoice-extraction
+prompt: prompts/extraction_v1.txt
+
+models:
+  - mock/mock-small
+
+parameters:
+  temperature: 0
+
+default_assert:
+  - type: json_schema
+    schema: schemas/invoice.json
+  - type: equals
+    path: $.invoice_number
+    value_from: expected.invoice_number
+  - type: numeric_tolerance
+    path: $.total
+    value_from: expected.total
+    tolerance: 0.01
+
+regression:
+  min_samples: 5
+
+tests:
+  - id: basic-invoice
+    vars:
+      text: "Hi jane@example.com, invoice INV-1001 dated 2024-03-01 is ready. Amount due: $120.50."
+    expected: {invoice_number: INV-1001, total: 120.50}
+    assert:
+      - type: regex
+        path: $.email
+        pattern: '^[\w.+-]+@[\w-]+\.[\w.]+$'
+      - type: semantic_similarity
+        path: $.email
+        reference: "jane@example.com"
+        threshold: 0.9
+        embedding: local
+
+  - {id: thousands-separator, vars: {text: "Invoice INV-2040 (2024-04-12) for acme@corp.io. Total: $1,250.00"}, expected: {invoice_number: INV-2040, total: 1250.00}}
+  - {id: no-cents, vars: {text: "Your invoice INV-3 total is $99. Contact billing@shop.com. Issued 2024-01-15."}, expected: {invoice_number: INV-3, total: 99}}
+  - {id: lowercase-id, vars: {text: "ref inv-77 — please pay $15.75 by 2024-05-30. Customer: bob@mail.net"}, expected: {invoice_number: INV-77, total: 15.75}}
+  - {id: no-date, vars: {text: "INV-5005: $300.00 due. Questions? sam@site.org"}, expected: {invoice_number: INV-5005, total: 300.00}}
+  - {id: large-amount, vars: {text: "Enterprise renewal INV-9001 on 2024-12-31: $48,000.00 to cfo@bigco.com"}, expected: {invoice_number: INV-9001, total: 48000.00}}
+  - {id: small-amount, vars: {text: "Micro-charge INV-12 of $0.99 on 2024-02-02 for kid@home.com"}, expected: {invoice_number: INV-12, total: 0.99}}
+  - {id: extra-noise, vars: {text: "Reminder!! (2nd notice) INV-4410 — balance $75.20, issued 2024-06-01, account owner lee@firm.co.uk. Ignore if paid."}, expected: {invoice_number: INV-4410, total: 75.20}}

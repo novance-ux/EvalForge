@@ -1,0 +1,11 @@
+Extract the following fields from the invoice email below.
+
+Fields:
+- invoice_number (string like "INV-1234", or null)
+- total (number, the amount due in dollars, or null)
+- email (the customer's email address, or null)
+- date (ISO date YYYY-MM-DD, or null)
+
+Email: """{{ text }}"""
+
+Return ONLY valid JSON with exactly these four keys.

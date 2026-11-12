@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM Regression Harness</title>
+<style>
+  :root { --fg:#1f2933; --muted:#616e7c; --line:#e4e7eb; --bg:#f5f7fa; --card:#fff; --accent:#2a6fdb;
+          --good:#1e8e5a; --good-bg:#e3f6ec; --bad:#c0392b; --bad-bg:#fdecea; --warn:#b7791f; --warn-bg:#fff5e0; --neutral-bg:#eef0f3; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg:#e4e7eb; --muted:#9aa5b1; --line:#323f4b; --bg:#12181f; --card:#1b242e; --accent:#6ea8fe;
+            --good:#5fd49a; --good-bg:#15352a; --bad:#ff8a80; --bad-bg:#3d1f1c; --warn:#f6c26b; --warn-bg:#3a2e14; --neutral-bg:#26313c; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--fg); background:var(--bg); }
+  header { padding:16px 24px; border-bottom:1px solid var(--line); background:var(--card); display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  header nav button { background:none; border:0; color:var(--muted); font:inherit; padding:6px 10px; cursor:pointer; border-radius:6px; }
+  header nav button.active { color:var(--accent); background:var(--neutral-bg); font-weight:600; }
+  main { max-width:1200px; margin:0 auto; padding:20px 24px 60px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px 20px; margin-bottom:16px; }
+  h2 { font-size:15px; margin:0 0 12px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .tile .k { color:var(--muted); font-size:12px; } .tile .v { font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.click { cursor:pointer; } tr.click:hover { background:var(--neutral-bg); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; font-weight:600; background:var(--neutral-bg); color:var(--muted); }
+  .IMPROVED,.fixed,.pass { background:var(--good-bg); color:var(--good); }
+  .REGRESSED,.regressed,.fail { background:var(--bad-bg); color:var(--bad); }
+  .INCONCLUSIVE,.score_down { background:var(--warn-bg); color:var(--warn); }
+  .muted { color:var(--muted); font-size:12px; }
+  pre { background:var(--neutral-bg); padding:8px; border-radius:4px; white-space:pre-wrap; word-break:break-word; margin:4px 0; font-size:12px; max-height:220px; overflow:auto; }
+  select, button.primary { font:inherit; padding:6px 10px; border-radius:6px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:760px) { .grid2 { grid-template-columns:1fr; } main { padding:16px; } }
+  .hidden { display:none; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM Regression Harness</h1>
+  <nav>
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="compare">Run comparison</button>
+    <button data-tab="drill">Test drilldown</button>
+  </nav>
+  <span class="muted" style="margin-left:auto"><a href="/docs">API docs</a></span>
+</header>
+<main>
+  <!-- ======================= Overview ======================= -->
+  <div id="tab-overview">
+    <div class="tiles" id="tiles"></div>
+    <div class="card" style="margin-top:16px">
+      <h2>Run history</h2>
+      <div class="scroll"><table id="runs"></table></div>
+      <p class="muted">Regression status is computed against the suite's current baseline. Click a run to compare it with its baseline.</p>
+    </div>
+  </div>
+
+  <!-- ======================= Compare ======================= -->
+  <div id="tab-compare" class="hidden">
+    <div class="card">
+      <div class="row">
+        <label>Baseline <select id="sel-base"></select></label>
+        <label>Current <select id="sel-cur"></select></label>
+        <button class="primary" id="btn-compare">Compare</button>
+        <span id="report-link" class="muted"></span>
+      </div>
+      <div id="cmp-verdict"></div>
+      <div class="scroll"><table id="cmp-metrics"></table></div>
+      <p class="muted" id="cmp-note"></p>
+    </div>
+    <div class="card">
+      <h2>Changed tests</h2>
+      <div class="scroll"><table id="cmp-tests"></table></div>
+    </div>
+  </div>
+
+  <!-- ======================= Drilldown ======================= -->
+  <div id="tab-drill" class="hidden">
+    <div class="card" id="drill"><p class="muted">Pick a test from the comparison tab.</p></div>
+  </div>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = (v) => v == null ? "–" : (v * 100).toFixed(1) + "%";
+const secs = (ms) => ms == null ? "–" : (ms / 1000).toFixed(2) + "s";
+const money = (v) => v == null ? "–" : v === 0 ? "$0.00" : v < 0.01 ? "$" + v.toFixed(6) : "$" + v.toFixed(4);
+const pill = (s) => s ? `<span class="pill ${esc(s)}">${esc(s)}</span>` : `<span class="muted">–</span>`;
+const api = (p) => fetch(p).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); });
+
+let runs = [], overviewData = null, lastCmp = null;
+
+function showTab(name) {
+  document.querySelectorAll("header nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  ["overview", "compare", "drill"].forEach(t => $("#tab-" + t).classList.toggle("hidden", t !== name));
+}
+document.querySelectorAll("header nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+async function loadOverview() {
+  const [o, r] = await Promise.all([api("/api/overview"), api("/api/runs?limit=200")]);
+  overviewData = o; runs = r;
+  const tiles = [
+    ["Total runs", o.total_runs], ["Total tests", o.total_tests], ["Pass rate", pct(o.pass_rate)],
+    ["Regressions", o.regressions], ["Avg cost / run", money(o.average_cost_per_run)], ["Avg latency", secs(o.average_latency_ms)],
+  ];
+  $("#tiles").innerHTML = tiles.map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  $("#runs").innerHTML = `<tr><th>Run ID</th><th>Date</th><th>Suite</th><th>Prompt version</th><th>Model</th>
+      <th class="num">Accuracy</th><th class="num">Cost</th><th class="num">Latency (mean / p95)</th><th>Regression status</th></tr>` +
+    r.map(x => `<tr class="click" data-id="${x.id}" data-suite="${esc(x.suite_name)}">
+      <td>${x.id}${x.is_baseline ? ' <span class="pill">baseline</span>' : ""}</td>
+      <td>${esc(x.timestamp.slice(0, 16).replace("T", " "))}</td><td>${esc(x.suite_name)}</td><td>${esc(x.prompt_version)}</td>
+      <td>${esc(x.models.join(", "))}</td><td class="num">${pct(x.accuracy)}</td><td class="num">${money(x.cost)}</td>
+      <td class="num">${secs(x.latency_mean_ms)} / ${secs(x.latency_p95_ms)}</td><td>${pill(x.regression_status)}</td></tr>`).join("");
+  document.querySelectorAll("#runs tr.click").forEach(tr => tr.onclick = () => {
+    const base = overviewData.baselines[tr.dataset.suite];
+    compareRuns(base && base != tr.dataset.id ? base : tr.dataset.id, tr.dataset.id);
+  });
+  const opts = r.map(x => `<option value="${x.id}">#${x.id} · ${esc(x.suite_name)} · ${esc(x.prompt_version)} · ${esc(x.models.join(","))}</option>`).join("");
+  $("#sel-base").innerHTML = opts; $("#sel-cur").innerHTML = opts;
+  if (r.length > 1) { $("#sel-base").value = r[1].id; $("#sel-cur").value = r[0].id; }
+}
+
+function fmt(name, v) { return name.includes("latency") ? secs(v) : name.includes("cost") ? money(v) : pct(v); }
+
+async function compareRuns(base, cur) {
+  $("#sel-base").value = base; $("#sel-cur").value = cur; showTab("compare");
+  $("#cmp-metrics").innerHTML = "<tr><td>Loading…</td></tr>";
+  let c;
+  try { c = await api(`/api/compare?baseline=${base}&current=${cur}`); }
+  catch (e) { $("#cmp-metrics").innerHTML = `<tr><td>Cannot compare: ${esc(e.message)}</td></tr>`; return; }
+  lastCmp = c;
+  $("#report-link").innerHTML = `<a href="/reports/${cur}?baseline=${base}" target="_blank">Full HTML report ↗</a>`;
+  $("#cmp-verdict").innerHTML = `<p>Overall ${pill(c.overall)} · Quality ${pill(c.quality)} · Efficiency ${pill(c.efficiency)}
+     <span class="muted">· ${esc(c.baseline_prompt)} → ${esc(c.current_prompt)} · paired on ${esc(c.pairing)}, n = ${c.n_pairs}</span></p>`;
+  $("#cmp-metrics").innerHTML = `<tr><th>Metric</th><th class="num">Baseline</th><th class="num">Current</th><th class="num">Change</th>
+      <th class="num">95% CI</th><th>Status</th><th>Note</th></tr>` +
+    c.metrics.map(m => {
+      const rel = m.threshold_kind === "relative";
+      const change = m.pct_diff == null ? "n/a" : (m.pct_diff >= 0 ? "+" : "") + (m.pct_diff * 100).toFixed(1) + "%";
+      const ci = !m.ci ? "–" : rel ? `[${(m.ci.low*100).toFixed(1)}%, ${(m.ci.high*100).toFixed(1)}%]`
+                                   : `[${(m.ci.low*100).toFixed(1)}, ${(m.ci.high*100).toFixed(1)}] pp`;
+      return `<tr><td>${esc(m.name)}</td><td class="num">${fmt(m.name, m.baseline)}</td><td class="num">${fmt(m.name, m.current)}</td>
+        <td class="num">${change}</td><td class="num">${ci}</td><td>${pill(m.status)}</td><td class="muted">${esc(m.note)}</td></tr>`;
+    }).join("");
+  $("#cmp-note").textContent = "A verdict needs the change to exceed its threshold AND the paired bootstrap CI to exclude zero.";
+  const changed = c.tests.filter(t => ["regressed", "fixed", "score_down"].includes(t.change));
+  $("#cmp-tests").innerHTML = changed.length === 0 ? "<tr><td>No test changed its verdict.</td></tr>" :
+    `<tr><th>Test</th><th>Change</th><th>Input</th><th>Baseline output</th><th>Current output</th></tr>` +
+    changed.map(t => `<tr class="click" data-test="${esc(t.test_id)}"><td>${esc(t.test_id)}</td><td>${pill(t.change)}</td>
+      <td>${esc(Object.values(t.input).join(" | ")).slice(0, 120)}</td><td><pre>${esc(t.baseline_output)}</pre></td><td><pre>${esc(t.current_output)}</pre></td></tr>`).join("");
+  document.querySelectorAll("#cmp-tests tr.click").forEach(tr => tr.onclick = () => drill(base, cur, tr.dataset.test));
+}
+
+function side(title, rows) {
+  if (!rows.length) return `<div><h2>${title}</h2><p class="muted">Not in this run.</p></div>`;
+  return `<div><h2>${title}</h2>` + rows.map(r => `
+    <p>${pill(r.passed ? "pass" : "fail")} score ${r.score.toFixed(2)} · ${r.latency_ms.toFixed(0)} ms · ${money(r.cost)}
+       · ${r.input_tokens}+${r.output_tokens} tokens${r.cached ? " · cached" : ""} <span class="muted">${esc(r.model)}${r.repeat_index ? " #" + r.repeat_index : ""}</span></p>
+    <pre>${esc(r.error || r.output)}</pre>
+    <table>${r.scorers.map(s => `<tr><td>${pill(s.passed ? "pass" : "fail")}</td><td>${esc(s.type)}</td><td>${esc(s.reason)}</td></tr>`).join("")}</table>
+    <details><summary class="muted">Rendered prompt</summary><pre>${esc(r.rendered_prompt)}</pre></details>`).join("") + "</div>";
+}
+
+async function drill(base, cur, testId) {
+  showTab("drill");
+  const d = await api(`/api/compare/${base}/${cur}/tests/${encodeURIComponent(testId)}`);
+  $("#drill").innerHTML = `
+    <h2>Test ${esc(d.test_id)} <span class="muted">run ${base} → run ${cur}</span></h2>
+    <p><b>Input:</b> ${esc(Object.entries(d.input).map(([k, v]) => k + ": " + v).join(" | "))}</p>
+    <p><b>Expected result:</b> <code>${esc(JSON.stringify(d.expected))}</code></p>
+    ${d.regression_reason ? `<p>${pill("REGRESSED")} <b>Regression reason:</b> ${esc(d.regression_reason)}</p>` : ""}
+    <div class="grid2">${side("Baseline output (run " + base + ")", d.baseline)}${side("Current output (run " + cur + ")", d.current)}</div>`;
+}
+
+$("#btn-compare").onclick = () => compareRuns($("#sel-base").value, $("#sel-cur").value);
+loadOverview().catch(e => { $("#tiles").innerHTML = `<div class="card">Could not load data: ${esc(e.message)}. Run an evaluation first.</div>`; });
+</script>
+</body>
+</html>

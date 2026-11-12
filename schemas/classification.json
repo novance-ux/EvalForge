@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Support ticket classification",
+  "type": "object",
+  "properties": {
+    "category": {
+      "type": "string",
+      "enum": ["billing", "account", "technical", "refund", "shipping", "cancellation"]
+    }
+  },
+  "required": ["category"]
+}

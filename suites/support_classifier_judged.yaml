@@ -1,0 +1,37 @@
+# Same test cases as support_classifier.yaml, additionally scored by an LLM judge.
+# Used by Experiment 5 (judge reliability / human calibration).
+#
+# The judge model is deliberately configured separately from the evaluated model.
+# Judge scores are automated opinions, NOT ground truth.
+
+name: support-ticket-classifier-judged
+prompt: prompts/classifier_v1.txt
+include_tests: support_classifier.yaml
+
+models:
+  - mock/mock-small
+
+parameters:
+  temperature: 0
+
+classification:
+  path: $.category
+  expected_field: category
+  labels: [billing, account, technical, refund, shipping, cancellation]
+
+judge:
+  model: mock/mock-judge
+  runs: 3            # sample the judge 3 times per test
+  temperature: 0.7   # > 0 so repeated judge runs can disagree
+
+default_assert:
+  - type: equals
+    path: $.category
+    value_from: expected.category
+  - type: llm_judge
+    rubric: |
+      5 = correct category, output is exactly the requested JSON.
+      4 = correct category, minor formatting issues.
+      3 = correct category but not machine-readable.
+      2 = well-formed but wrong category.
+      1 = wrong category and malformed output.

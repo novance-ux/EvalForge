@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run {{ run.id }} · {{ run.suite_name }}</title>
+{{ plotly_tag | safe }}
+<style>
+  :root { --fg:#1f2933; --muted:#616e7c; --line:#e4e7eb; --bg:#f7f8fa; --card:#fff;
+          --good:#1e8e5a; --bad:#c0392b; --warn:#b7791f; --accent:#2a6fdb; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--fg); background:var(--bg); }
+  header { background:#1f2933; color:#fff; padding:20px 32px; }
+  header h1 { margin:0 0 4px; font-size:20px; }
+  header .meta { color:#cbd2d9; font-size:13px; }
+  nav { background:#fff; border-bottom:1px solid var(--line); padding:8px 32px; position:sticky; top:0; z-index:5; overflow-x:auto; white-space:nowrap; }
+  nav a { color:var(--muted); text-decoration:none; margin-right:16px; font-size:13px; }
+  nav a:hover { color:var(--accent); }
+  main { max-width:1200px; margin:0 auto; padding:24px 32px 64px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:20px 24px; margin-bottom:20px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  h3 { font-size:14px; margin:16px 0 8px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+  .tile { border:1px solid var(--line); border-radius:6px; padding:12px; }
+  .tile .k { color:var(--muted); font-size:12px; }
+  .tile .v { font-size:22px; font-weight:600; font-variant-numeric:tabular-nums; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; background:#fafbfc; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  pre, code { font-family: ui-monospace, Consolas, monospace; font-size:12px; }
+  pre { background:#f4f5f7; padding:8px; border-radius:4px; white-space:pre-wrap; word-break:break-word; margin:0; max-height:180px; overflow:auto; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px; font-weight:600; }
+  .IMPROVED, .fixed, .pass { background:#e3f6ec; color:var(--good); }
+  .REGRESSED, .regressed, .fail { background:#fdecea; color:var(--bad); }
+  .INCONCLUSIVE, .score_down { background:#fff5e0; color:var(--warn); }
+  .NO_CHANGE, .still_passing, .still_failing, .score_up { background:#eef0f3; color:var(--muted); }
+  .note { color:var(--muted); font-size:12px; }
+  .banner { padding:12px 16px; border-radius:6px; font-weight:600; margin-bottom:12px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns:1fr; } main { padding:16px; } }
+  details summary { cursor:pointer; color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>LLM Regression Report — {{ run.suite_name }}</h1>
+  <div class="meta">Run {{ run.id }} · prompt <b>{{ run.prompt_version }}</b> ({{ run.prompt_hash }}) · models {{ run.models | join(", ") }}
+    · {{ run.timestamp.strftime("%Y-%m-%d %H:%M UTC") }} · git {{ run.git_commit or "n/a" }} · repeats {{ run.repeats }} · temperature {{ run.parameters.temperature }}</div>
+</header>
+<nav>
+  <a href="#summary">Summary</a><a href="#models">Models</a><a href="#prompts">Prompts</a><a href="#accuracy">Accuracy</a>
+  <a href="#scores">Scores</a><a href="#latency">Latency</a><a href="#cost">Cost</a><a href="#failed">Failed tests</a>
+  <a href="#regressions">Regressions</a><a href="#outputs">Outputs</a>{% if summary.judge %}<a href="#judge">Judge</a>{% endif %}<a href="#scorers">Scorers</a>
+</nav>
+<main>
+
+<section id="summary">
+  <h2>1. Run summary</h2>
+  {% if comparison %}
+    {% set o = comparison.overall.value %}
+    <div class="banner {{ o }}">
+      {% if o == "REGRESSED" %}Regression detected vs baseline run {{ comparison.baseline_run_id }}
+      {% elif o == "IMPROVED" %}Improved vs baseline run {{ comparison.baseline_run_id }}, no regressions
+      {% elif o == "INCONCLUSIVE" %}Inconclusive vs baseline run {{ comparison.baseline_run_id }}: differences may be noise or n is too small
+      {% else %}No significant change vs baseline run {{ comparison.baseline_run_id }}{% endif %}
+      <div style="font-weight:400;font-size:13px;margin-top:4px">
+        Quality: <span class="pill {{ comparison.quality.value }}">{{ comparison.quality.value }}</span>
+        &nbsp; Efficiency (latency, cost): <span class="pill {{ comparison.efficiency.value }}">{{ comparison.efficiency.value }}</span>
+        {% if comparison.improved_metrics %}&nbsp; Better: {{ comparison.improved_metrics | join(", ") }}{% endif %}
+        {% if comparison.regressed_metrics %}&nbsp; Worse: {{ comparison.regressed_metrics | join(", ") }}{% endif %}
+      </div>
+    </div>
+  {% endif %}
+  <div class="tiles">
+    <div class="tile"><div class="k">Tests</div><div class="v">{{ summary.n }}</div></div>
+    <div class="tile"><div class="k">Passed / Failed</div><div class="v">{{ summary.passed }} / {{ summary.failed }}</div></div>
+    <div class="tile"><div class="k">Accuracy (pass rate)</div><div class="v">{{ summary.pass_rate | pct }}</div></div>
+    {% if summary.classification %}<div class="tile"><div class="k">Macro-F1</div><div class="v">{{ "%.3f" % summary.classification.macro_f1 }}</div></div>{% endif %}
+    <div class="tile"><div class="k">JSON validity</div><div class="v">{{ summary.json_validity | pct }}</div></div>
+    <div class="tile"><div class="k">Mean / P95 latency</div><div class="v">{{ summary.latency.mean | secs }} / {{ summary.latency.p95 | secs }}</div></div>
+    <div class="tile"><div class="k">Total cost</div><div class="v">{{ summary.total_cost | money }}</div></div>
+    <div class="tile"><div class="k">Cache hits / misses</div><div class="v">{{ run.cache_hits }} / {{ run.cache_misses }}</div></div>
+  </div>
+  {% if summary.errors %}<p class="note">{{ summary.errors }} test(s) failed with provider errors.</p>{% endif %}
+</section>
+
+<section id="models">
+  <h2>2. Model comparison</h2>
+  <table>
+    <tr><th>Model</th><th class="num">Accuracy</th><th class="num">Macro-F1</th><th class="num">JSON valid</th><th class="num">Mean score</th>
+        <th class="num">Mean lat</th><th class="num">P95 lat</th><th class="num">Cost</th><th class="num">Cost / correct</th></tr>
+    {% for m, s in per_model.items() %}
+    <tr><td>{{ m }}</td><td class="num">{{ s.pass_rate | pct }}</td>
+        <td class="num">{{ "%.3f" % s.classification.macro_f1 if s.classification else "-" }}</td>
+        <td class="num">{{ s.json_validity | pct }}</td><td class="num">{{ "%.3f" % s.mean_score }}</td>
+        <td class="num">{{ s.latency.mean | secs }}</td><td class="num">{{ s.latency.p95 | secs }}</td>
+        <td class="num">{{ s.total_cost | money }}</td><td class="num">{{ (s.cost_per_correct if s.classification else s.cost_per_success) | money }}</td></tr>
+    {% endfor %}
+  </table>
+  {{ charts.accuracy | safe }}
+</section>
+
+<section id="prompts">
+  <h2>3. Prompt comparison</h2>
+  {% if baseline %}
+    <p>Baseline run {{ baseline.id }} used <b>{{ baseline.prompt_version }}</b> ({{ baseline.prompt_hash }});
+       this run uses <b>{{ run.prompt_version }}</b> ({{ run.prompt_hash }}).</p>
+    {% if prompt_diff %}<pre style="max-height:400px">{{ prompt_diff }}</pre>{% else %}<p class="note">Prompt templates are identical.</p>{% endif %}
+  {% else %}
+    <p class="note">No baseline to compare against. Prompt template used:</p>
+    <pre style="max-height:400px">{{ run.prompt_template }}</pre>
+  {% endif %}
+</section>
+
+<section id="accuracy">
+  <h2>4. Accuracy</h2>
+  {% if summary.classification %}
+  <div class="grid2">
+    <div>
+      <table>
+        <tr><th>Label</th><th class="num">Precision</th><th class="num">Recall</th><th class="num">F1</th><th class="num">Support</th></tr>
+        {% for lab, pc in summary.classification.per_class.items() %}
+        <tr><td>{{ lab }}</td><td class="num">{{ "%.2f" % pc.precision }}</td><td class="num">{{ "%.2f" % pc.recall }}</td>
+            <td class="num">{{ "%.2f" % pc.f1 }}</td><td class="num">{{ pc.support }}</td></tr>
+        {% endfor %}
+      </table>
+      <p class="note">Label accuracy {{ summary.classification.accuracy | pct }} · macro-F1 {{ "%.3f" % summary.classification.macro_f1 }}.
+        Columns in the matrix beyond the label set are invented labels or unparseable output (&lt;invalid&gt;).</p>
+    </div>
+    <div>{{ charts.confusion | safe }}</div>
+  </div>
+  {% else %}
+  <p>Pass rate {{ summary.pass_rate | pct }} ({{ summary.passed }}/{{ summary.n }}). Configure <code>classification:</code> in the suite for per-label metrics.</p>
+  {% endif %}
+</section>
+
+<section id="scores">
+  <h2>5. Score distribution</h2>
+  {{ charts.scores | safe }}
+</section>
+
+<section id="latency">
+  <h2>6. Latency</h2>
+  <table>
+    <tr><th>Model</th><th class="num">Mean</th><th class="num">Median</th><th class="num">P50</th><th class="num">P95</th><th class="num">P99</th><th class="num">Max</th></tr>
+    {% for m, s in per_model.items() %}
+    <tr><td>{{ m }}</td>{% for k in ["mean","median","p50","p95","p99","max"] %}<td class="num">{{ "%.0f" % s.latency[k] }} ms</td>{% endfor %}</tr>
+    {% endfor %}
+  </table>
+  {{ charts.latency | safe }}
+</section>
+
+<section id="cost">
+  <h2>7. Cost</h2>
+  <table>
+    <tr><th>Model</th><th class="num">Input tokens</th><th class="num">Output tokens</th><th class="num">Input cost</th><th class="num">Output cost</th>
+        <th class="num">Total</th><th class="num">Per test</th><th class="num">Per successful test</th></tr>
+    {% for m, s in per_model.items() %}
+    <tr><td>{{ m }}</td><td class="num">{{ s.input_tokens }}</td><td class="num">{{ s.output_tokens }}</td>
+        <td class="num">{{ s.input_cost | money }}</td><td class="num">{{ s.output_cost | money }}</td><td class="num">{{ s.total_cost | money }}</td>
+        <td class="num">{{ s.cost_per_test | money }}</td><td class="num">{{ s.cost_per_success | money }}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="note">Costs are computed from <code>config/pricing.yaml</code>. Prices there are examples and may not be current.
+    Estimated cost saved by the cache this run: {{ run.cost_saved | money }}.
+    {% if unpriced %}<b>Unpriced models (costed at $0):</b> {{ unpriced | join(", ") }}.{% endif %}</p>
+  {{ charts.cost | safe }}
+</section>
+
+<section id="failed">
+  <h2>8. Failed tests ({{ failed | length }})</h2>
+  {% if failed %}
+  <table>
+    <tr><th>Test</th><th>Model</th><th>Input</th><th>Expected</th><th>Output</th><th>Why it failed</th></tr>
+    {% for r in failed[:200] %}
+    <tr><td>{{ r.test_id }}{% if r.repeat_index %} #{{ r.repeat_index }}{% endif %}</td><td>{{ r.model }}</td>
+        <td>{{ r.vars.values() | join(" | ") | truncate(140) }}</td><td><code>{{ r.expected | tojson }}</code></td>
+        <td><pre>{{ r.error or r.output }}</pre></td>
+        <td>{% for s in r.scorer_results if not s.passed %}<div><b>{{ s.scorer_type }}</b>: {{ s.reason }}</div>{% endfor %}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p>All tests passed.</p>{% endif %}
+</section>
+
+<section id="regressions">
+  <h2>9. Regressions</h2>
+  {% if comparison %}
+  <p>Baseline run {{ comparison.baseline_run_id }} ({{ comparison.baseline_prompt }}, {{ comparison.baseline_models | join(", ") }}) →
+     current run {{ comparison.current_run_id }} ({{ comparison.current_prompt }}, {{ comparison.current_models | join(", ") }}).
+     Paired on {{ comparison.pairing }}, n = {{ comparison.n_pairs }}.</p>
+  <table>
+    <tr><th>Metric</th><th class="num">Baseline</th><th class="num">Current</th><th class="num">Change</th><th class="num">% change</th>
+        <th class="num">{{ (comparison.thresholds.confidence_level * 100) | int }}% CI</th><th class="num">Threshold</th><th>Status</th><th>Note</th></tr>
+    {% for m in comparison.metrics %}
+    {% set rel = m.threshold_kind == "relative" %}
+    <tr><td>{{ m.name }}</td>
+      {% if "latency" in m.name %}<td class="num">{{ m.baseline | secs }}</td><td class="num">{{ m.current | secs }}</td><td class="num">{{ "%+.0f" % m.abs_diff }} ms</td>
+      {% elif "cost" in m.name %}<td class="num">{{ m.baseline | money }}</td><td class="num">{{ m.current | money }}</td><td class="num">{{ "%+.5f" % m.abs_diff }}</td>
+      {% else %}<td class="num">{{ m.baseline | pct }}</td><td class="num">{{ m.current | pct }}</td><td class="num">{{ "%+.1f" % (m.abs_diff * 100) }} pp</td>{% endif %}
+      <td class="num">{{ "%+.1f%%" % (m.pct_diff * 100) if m.pct_diff is not none else "n/a" }}</td>
+      <td class="num">{% if m.ci %}{% if rel %}[{{ "%+.1f%%" % (m.ci.low*100) }}, {{ "%+.1f%%" % (m.ci.high*100) }}]{% else %}[{{ "%+.1f" % (m.ci.low*100) }}, {{ "%+.1f" % (m.ci.high*100) }}] pp{% endif %}{% else %}-{% endif %}</td>
+      <td class="num">{% if rel %}+{{ "%.0f%%" % (m.threshold*100) }}{% else %}{{ "%.1f" % (m.threshold*100) }} pp{% endif %}</td>
+      <td><span class="pill {{ m.status.value }}">{{ m.status.value }}</span></td>
+      <td class="note">{{ m.note }}{% if m.p_value is not none %} · McNemar p = {{ "%.4f" % m.p_value }}{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  <p class="note">Verdicts require both: the change exceeds the configured threshold AND the paired bootstrap CI excludes zero.
+     With fewer than {{ comparison.thresholds.min_samples }} paired tests every verdict is INCONCLUSIVE.</p>
+  <div class="grid2"><div>{{ charts.comparison | safe }}</div><div>{{ charts.changes | safe }}</div></div>
+  {% set changed = comparison.tests | selectattr("change", "in", ["regressed", "fixed", "score_down"]) | list %}
+  <h3>Changed tests ({{ changed | length }})</h3>
+  {% if changed %}
+  <table>
+    <tr><th>Test</th><th>Change</th><th>Input</th><th>Expected</th><th>Baseline output</th><th>Current output</th><th>Regression reason</th></tr>
+    {% for t in changed %}
+    <tr><td>{{ t.test_id }}</td><td><span class="pill {{ t.change }}">{{ t.change }}</span></td>
+        <td>{{ t.input.values() | join(" | ") | truncate(120) }}</td><td><code>{{ t.expected | tojson }}</code></td>
+        <td><pre>{{ t.baseline_output }}</pre></td><td><pre>{{ t.current_output }}</pre></td>
+        <td>{{ t.reasons | join("; ") if t.change != "fixed" else "-" }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p>No test changed its verdict.</p>{% endif %}
+  {% else %}
+  <p class="note">No baseline comparison. Set a baseline with <code>llm-harness baseline RUN_ID</code> or pass <code>--baseline RUN_ID</code>.</p>
+  {% endif %}
+</section>
+
+<section id="outputs">
+  <h2>10. Side-by-side outputs</h2>
+  <details {% if grid | length <= 20 %}open{% endif %}><summary>Show {{ grid | length }} tests{% if models | length > 1 %} across {{ models | length }} models{% endif %}</summary>
+  <table>
+    <tr><th>Test</th><th>Input</th><th>Expected</th>
+      {% if comparison and models | length == 1 %}<th>Baseline output</th>{% endif %}
+      {% for m in models %}<th>{{ m }}</th>{% endfor %}</tr>
+    {% set base_out = {} %}
+    {% if comparison %}{% for t in comparison.tests %}{% set _ = base_out.update({t.test_id: t.baseline_output}) %}{% endfor %}{% endif %}
+    {% for tid, row in grid.items() %}
+    <tr><td>{{ tid }}</td><td>{{ row.vars.values() | join(" | ") | truncate(120) }}</td><td><code>{{ row.expected | tojson }}</code></td>
+      {% if comparison and models | length == 1 %}<td><pre>{{ base_out.get(tid, "-") }}</pre></td>{% endif %}
+      {% for m in models %}{% set r = row.get(m) %}
+        <td>{% if r %}<span class="pill {{ 'pass' if r.passed else 'fail' }}">{{ "%.2f" % r.score }}</span> <span class="note">{{ "%.0f" % r.latency_ms }} ms · {{ r.cost | money }}</span><pre>{{ r.error or r.output }}</pre>{% else %}-{% endif %}</td>
+      {% endfor %}</tr>
+    {% endfor %}
+  </table>
+  </details>
+</section>
+
+{% if summary.judge %}
+<section id="judge">
+  <h2>LLM judge reliability</h2>
+  <div class="tiles">
+    <div class="tile"><div class="k">Judge model(s)</div><div class="v" style="font-size:15px">{{ summary.judge.judge_models | join(", ") }}</div></div>
+    <div class="tile"><div class="k">Runs per test</div><div class="v">{{ summary.judge.runs_per_test }}</div></div>
+    <div class="tile"><div class="k">Mean judge score</div><div class="v">{{ "%.2f" % summary.judge.mean_score }}</div></div>
+    <div class="tile"><div class="k">Mean within-test std</div><div class="v">{{ "%.2f" % summary.judge.mean_within_test_std }}</div></div>
+    <div class="tile"><div class="k">Mean agreement rate</div><div class="v">{{ summary.judge.mean_agreement_rate | pct }}</div></div>
+    <div class="tile"><div class="k">Judge (eval) cost</div><div class="v">{{ summary.judge.judge_cost | money }}</div></div>
+  </div>
+  {% if summary.judge.same_model_warnings %}<p class="note"><b>Warning:</b> {{ summary.judge.same_model_warnings }} test(s) were judged by the same model that produced the output (self-preference bias risk).</p>{% endif %}
+  <p class="note">Judge scores are automated opinions, not ground truth. Use <code>llm-harness calibrate</code> with human labels to measure agreement (Cohen's kappa).</p>
+</section>
+{% endif %}
+
+<section id="scorers">
+  <h2>11. Scorer explanations</h2>
+  <table>{% for t, doc in scorer_docs.items() %}<tr><td><code>{{ t }}</code></td><td>{{ doc }}</td></tr>{% endfor %}</table>
+  <p class="note">A test passes only if every assertion passes. The test score is the weight-averaged scorer score in [0, 1].</p>
+</section>
+
+</main>
+</body>
+</html>

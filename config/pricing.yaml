@@ -1,0 +1,36 @@
+# Model pricing, in USD per 1 million tokens.
+#
+# IMPORTANT: these numbers are EXAMPLES. They are NOT guaranteed to be current.
+# Check your provider's pricing page and update this file before relying on
+# any cost figure the harness reports. Models missing from this file are
+# costed at $0 and flagged as "unpriced" in reports.
+#
+# Keys are matched as "provider/model" first, then "model".
+
+models:
+  # OpenAI-compatible examples (verify before use)
+  openai/gpt-4o-mini:
+    input_per_1m_tokens: 0.15
+    output_per_1m_tokens: 0.60
+  openai/gpt-4o:
+    input_per_1m_tokens: 2.50
+    output_per_1m_tokens: 10.00
+
+  # Local models have no per-token API cost (hardware/electricity not modelled).
+  ollama/llama3.2:
+    input_per_1m_tokens: 0.0
+    output_per_1m_tokens: 0.0
+  ollama/qwen2.5:
+    input_per_1m_tokens: 0.0
+    output_per_1m_tokens: 0.0
+
+  # Simulated models used by the offline mock provider. Illustrative only.
+  mock/mock-small:
+    input_per_1m_tokens: 0.20
+    output_per_1m_tokens: 0.80
+  mock/mock-large:
+    input_per_1m_tokens: 2.00
+    output_per_1m_tokens: 8.00
+  mock/mock-judge:
+    input_per_1m_tokens: 1.00
+    output_per_1m_tokens: 4.00
